@@ -56,6 +56,12 @@ aside{position:sticky;top:14px;display:flex;flex-direction:column;gap:14px}
 .pill.esp{background:#2f3c8f;color:#fff}
 .esp-box{background:#eef0fb;border:2px solid #2f3c8f;border-radius:10px;padding:12px 14px;margin:10px 0;font-size:13.5px}
 .esp-box b{color:#2f3c8f}
+.chk .amp{background:#fff4e5;color:#7a3b00;border:2px solid #e8892b}
+.chk .amp b{font-size:13px;color:#b54708}
+.chk .amp .row2{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.pill.amp{background:#fde3c4;color:#8a3d00}
+button.light.warn{border-color:#f0b35a;color:#ffe2b8}
+.badge{font-size:11.5px;background:rgba(255,255,255,.18);border-radius:99px;padding:1px 7px;margin-left:5px;font-weight:600}
 .chk .ok{background:var(--okbg);color:#1b5e3a;border-color:#bfe2cd}
 .chk button{margin-top:6px}
 .kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
@@ -100,6 +106,8 @@ dialog::backdrop{background:rgba(16,30,40,.45)}
     <label>Operador<input id="operador" placeholder="Apellido y nombre" autocomplete="name"></label>
     <button class="light" id="btnAbrir" title="Abrir una planilla Excel para seguir cargando o corregir">Abrir Excel</button>
     <input type="file" id="fileIn" accept=".xlsx,.xls" hidden>
+    <button class="light" id="btnBit" title="Hechos ya cargados, para detectar ampliaciones">Bitácora<span class="badge" id="bitBadge"></span></button>
+    <input type="file" id="bitIn" accept=".xlsx,.xls" multiple hidden>
     <button class="light" id="btnNueva">Nueva planilla</button>
     <button id="btnFin" style="background:#fff;color:var(--pri)">Finalizar y descargar Excel</button>
   </div>
@@ -163,7 +171,7 @@ const PKEY={};PART.forEach(p=>PKEY[key(p)]=p);
 const CARS=Object.keys(DATA.MPC).sort((a,b)=>norm(a).localeCompare(norm(b)));
 const CKEY={};CARS.forEach(c=>CKEY[key(c)]=c);
 const ALIAS_C={'robo calificado':'Robo','robo agravado':'Robo','robo automotor':'Robo','lesiones graves':'Lesiones','lesiones leves':'Lesiones','femicidio':'Homicidio','av de ilicito':'Averiguación de ilícito','av causales de muerte':'Averiguación causales de muerte','av de paradero':'Averiguación de paradero','ttva de homicidio':'Tentativa de homicidio','ttva de robo':'Tentativa de robo','ttva de hurto':'Tentativa de hurto','dano':'Daños','resistencia a la autoridad':'Atentado y resistencia a la autoridad','abuso de arma':'Abuso de armas'};
-let state={operador:'',hechos:[]},editId=null;
+let state={operador:'',hechos:[]},editId=null,formOtro=[];
 
 /* ---------- guardado local ---------- */
 const LS='cargaHermes.prueba';
@@ -230,6 +238,12 @@ function controles(h,todos){
     if(/femicidio/.test(H))I('DELITO','Femicidio: la carátula es Homicidio (o Tentativa de homicidio). Avisar al control para cargarlo en Homicidios PBA.');
     if(/robo calificado|robo agravado/.test(H)&&del&&del!=='Robo'&&del!=='Tentativa de robo')I('DELITO','"Robo calificado" no es carátula: se carga Robo y el agravante queda en el extracto.');
   }
+  {const reps=buscarRepetidos(h,todos);
+   if(reps.length){const x=reps[0],r=x.r,donde=r.JURISDICCION||r.PARTIDO||'';
+     const m=x.src==='pla'?'Ya está en esta misma planilla (hecho N° '+((todos||[]).findIndex(y=>y.id===r.id)+1)+'). Coincide: '+x.mot.join('; ')+'.'
+       :'Posible hecho YA CARGADO el '+fechaTxt(r.FECHA)+' ('+donde+(r.PU?', PU '+r.PU:', sin PU')+(r.OPERADOR?', '+r.OPERADOR:'')+'). Coincide: '+x.mot.join('; ')+'. Según la guía, si es el mismo hecho NO se carga en la planilla: se adjunta la ampliación en HERMES al hecho original.'+(!r.PU&&h.PU?' El original se cargó sin PU: actualizarlo con el PU '+h.PU+'.':'');
+     out.push({l:'amp',f:'AMP',m,reps})}
+   else if(h.EXTRACTO&&esAmpliacion(h.EXTRACTO))W('EXTRACTO','El extracto dice que es una ampliación o recaratulación. Según la guía no se carga en la planilla: se adjunta en HERMES al hecho original.'+(BIT.rows.length?' No se encontró el original en la bitácora: verificarlo en HERMES.':' No hay bitácora cargada para buscar el original.'))}
   for(const e of especiales(h,W))out.push({l:e.tipo==='Enfrentamiento'&&e.nivel==='Revisar'?'inf':'esp',f:'ESP',tipo:e.tipo,nivel:e.nivel,m:e.msg});
   return out;
 }
@@ -289,13 +303,96 @@ function especiales(h,W){
  return out}
 const ESPS=cs=>cs.filter(c=>c.l==='esp');
 const espTitulo=c=>(c.tipo==='Homicidio'?'HOMICIDIOS PBA':'ENFRENTAMIENTOS PBA')+' · '+c.nivel;
-const nivel=cs=>cs.some(c=>c.l==='err')?'err':cs.some(c=>c.l==='wrn')?'wrn':'ok';
+/* ---------- identificación del mismo hecho (bitácora) ---------- */
+const STOPM=new Set('personal policial masculino masculinos femenina femeninas dlio domicilio refirio refiere manifesto manifesta momentos hospital ingreso ingresa constato constata quien quienes mismo misma donde cuando entre sobre hacia desde tras luego siendo fecha horas hora lugar calle calles altura autores autor ignorados vtma victima denuncio denuncia dcio adelanto info ddic cria comisaria circunstancias establecer encontraba encontrandose habria habrian fueron estaba estaban segun dicho dicha parte personal pertenencias sustrajeron sustraen sustrajo armados armado sorprendido sorprendida sorprendidos interior vivienda finca robo hurto lesiones homicidio tentativa averiguacion ilicito causales muerte paradero asalto escruche publica partido localidad buenos aires provincia policia efectivo efectivos numerario perteneciente legajo dandose fuga posteriormente procedio procedieron trasladado trasladada traslado nosocomio estado reservado peligro fuera'.split(' '));
+const _hu=new Map();
+function huella(h){const k=(h.FECHA||'')+'|'+(h.PARTIDO||'')+'|'+(h.PU||'')+'|'+String(h.EXTRACTO||'');let v=_hu.get(k);if(!v){v=huella0(h);if(_hu.size>5000)_hu.clear();_hu.set(k,v)}return v}
+function huella0(h){
+  const txt=String(h.EXTRACTO||''),T=norm(txt);
+  const pus=new Set([...txt.matchAll(/\bPU\.?\s*[:#-]?\s*(\d{5,7})/gi)].map(m=>m[1]));if(h.PU&&/^\d{5,7}$/.test(String(h.PU).trim()))pus.add(String(h.PU).trim());
+  const nombres=[],NOAP=new Set(['hospital','denuncio','dcio','personal','calle','barrio','cria','comisaria','vtma','sargento','oficial','agente','cabo','subcria','ddic','info','adelanto','con','fecha','el','la','los','las','del','de','san','santa']);
+  const add=(ap,no,ed)=>{ap=norm(ap).split(' ').filter(w=>w.length>=3&&!NOAP.has(w));no=norm(no).split(' ').filter(w=>w.length>=3&&!NOAP.has(w));if(ap.length&&no.length)nombres.push({ap:ap.slice(-2),no,ed:ed?+ed:null})};
+  const ocup=[];
+  for(const m of txt.matchAll(/([A-ZÁÉÍÓÚÑ][a-záéíóúüñ]+(?:\s+(?:de\s+|del\s+|da\s+)?[A-ZÁÉÍÓÚÑ][a-záéíóúüñ]+){0,3}),\s*([A-ZÁÉÍÓÚÑ][a-záéíóúüñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúüñ]+){0,3})\s*\((?:[^)\d]{0,12})?(\d{1,3})?/g)){add(m[1],m[2],m[3]);ocup.push([m.index,m.index+m[0].length])}
+  for(const m of txt.matchAll(/((?:[A-ZÁÉÍÓÚÑ][a-záéíóúüñ]+\s+){1,3})([A-ZÁÉÍÓÚÑ][a-záéíóúüñ]+)\s*\(\s*(\d{1,3})\s*-\s*D/g)){const i=m.index;if(ocup.some(([a,b])=>i<b&&i+m[0].length>a))continue;add(m[2],m[1],m[3])}
+  const pat=new Set([...txt.matchAll(/\b([A-Z]{2})[\s-]?(\d{3})[\s-]?([A-Z]{2})\b|\b([A-Z]{3})[\s-]?(\d{3})\b/g)].map(m=>(m[1]?m[1]+m[2]+m[3]:m[4]+m[5])).filter(p=>!/^(PBA|HAF|HAB|DNI|UFI|CPA|DDI|PCA|SEM|UPA|USD|CAB|POR|LEG)/.test(p)));
+  const pal=new Set(T.replace(/[^a-z0-9ñ ]/g,' ').split(/\s+/).filter(w=>w.length>=5&&!STOPM.has(w)&&!/^\d+$/.test(w)));
+  return{pus,nombres,pat,pal,fecha:h.FECHA,partido:key(h.PARTIDO||'')}}
+function tokNombre(n){return n.split(' ').filter(w=>w.length>2&&w!=='del')}
+const PILA=new Set('juan carlos jose luis miguel angel maria ana jorge daniel gabriel alejandro susana noemi ester pablo martin diego sergio oscar hector raul ricardo roberto eduardo fernando gustavo javier marcelo mario nestor ruben victor hugo ramon antonio francisco manuel pedro jesus nicolas matias lucas sebastian facundo agustin gonzalo leandro cristian christian ezequiel maximiliano federico emanuel brian kevin lautaro thiago santiago tomas franco nahuel ivan elias david alberto enrique alfredo julio cesar silvia patricia graciela claudia andrea laura paula carolina natalia veronica marcela gabriela alejandra mariana florencia agustina camila micaela lucia sofia valentina milagros belen soledad romina vanesa mirta beatriz norma liliana alicia elena rosa isabel teresa cristina monica adriana sandra lorena celeste rocio aylen jazmin melisa'.split(' '));
+function mismoNombre(a,b){if(a.ed&&b.ed&&Math.abs(a.ed-b.ed)>1)return false;return a.ap.some(w=>w.length>=4&&!PILA.has(w)&&b.ap.includes(w))&&a.no.some(w=>b.no.includes(w))}
+function diasEntre(a,b){if(!a||!b)return 99;return Math.abs((new Date(a+'T12:00:00')-new Date(b+'T12:00:00'))/864e5)}
+function compararHechos(fa,fb){
+  const dias=diasEntre(fa.fecha,fb.fecha);if(dias>20)return null;
+  const mot=[];let fuerte=false,persona=false;const mismoPartido=fa.partido&&fa.partido===fb.partido;
+  for(const p of fa.pus)if(fb.pus.has(p)){mot.push('mismo PU '+p);fuerte=true;break}
+  for(const n of fa.nombres){for(const m of fb.nombres)if(mismoNombre(n,m)&&mismoPartido){persona=true;mot.push('misma persona ('+(n.ap.join(' ')+', '+n.no.join(' ')).replace(/\b\w/g,c=>c.toUpperCase())+')');fuerte=true;break}if(fuerte&&mot.length>1)break}
+  for(const p of fa.pat)if(fb.pat.has(p)){mot.push('misma patente '+p);fuerte=true;break}
+  let inter=0;for(const w of fa.pal)if(fb.pal.has(w))inter++;const ov=inter/Math.max(1,Math.min(fa.pal.size,fb.pal.size));
+  if(fuerte&&(mismoPartido||dias<=10))return{mot,ov};
+  if(mismoPartido&&dias<=7&&ov>=0.5&&inter>=8){mot.push('relato muy parecido ('+Math.round(ov*100)+'% de palabras en común)');return{mot,ov}}
+  return null}
+function esAmpliacion(ext){const T=norm(ext).slice(0,400);return /\b(ampl\.?|amp\.|ampliacion|ampliatoria|rec\.|recaratulad\w*)\b/.test(T)||/\(amp/.test(T)}
+
+/* ---------- bitácora (hechos ya cargados, compartida por Excel) ---------- */
+const LSB='cargaHermes.bitacora',BIT_DIAS=45;
+let BIT={rows:[],act:'',ver:0};
+function bitGuardar(){const lim=new Date(Date.now()-BIT_DIAS*864e5).toISOString().slice(0,10);BIT.rows=BIT.rows.filter(r=>!r.FECHA||r.FECHA>=lim);BIT.ver++;try{localStorage.setItem(LSB,JSON.stringify({rows:BIT.rows.map(({_f,...r})=>r),act:BIT.act}))}catch(e){toast('No se pudo guardar la bitácora en este navegador (¿espacio lleno?).')}bitEstado()}
+function bitLeer(){try{const s=JSON.parse(localStorage.getItem(LSB)||'null');if(s&&Array.isArray(s.rows))BIT={rows:s.rows,act:s.act||'',ver:1}}catch(e){}}
+function bitClave(r){return (r.PU?'pu'+r.PU+'|':'')+r.FECHA+'|'+key(String(r.EXTRACTO||'').slice(0,140))}
+function bitAgregar(lista,origen){const ya=new Set(BIT.rows.map(bitClave));let n=0;
+  for(const h of lista){const r={FECHA:h.FECHA,PARTIDO:h.PARTIDO,LOCALIDAD:h.LOCALIDAD,JURISDICCION:h.JURISDICCION,DELITO:h.DELITO,MODALIDAD:h.MODALIDAD,PU:String(h.PU||'').trim(),EXTRACTO:limpiarTexto(h.EXTRACTO).slice(0,1200),OPERADOR:h.OPERADOR||state.operador||'',ORIGEN:origen||''};
+    if(!r.EXTRACTO)continue;const k=bitClave(r);if(ya.has(k))continue;ya.add(k);BIT.rows.push(r);n++}
+  BIT.act=new Date().toISOString();bitGuardar();return n}
+function bitHuella(r){if(!r._f)r._f=huella(r);return r._f}
+const _repCache=new Map();
+function buscarRepetidos(h,todos){
+  if(!h.EXTRACTO||!h.FECHA)return[];
+  const ck=h.id+'|'+BIT.ver+'|'+(todos?todos.length:0)+'|'+h.FECHA+'|'+h.PARTIDO+'|'+h.PU+'|'+h.EXTRACTO.length+'|'+(h.otro||[]).length;
+  if(_repCache.has(ck))return _repCache.get(ck);
+  const fh=huella(h),propio=key(limpiarTexto(h.EXTRACTO)).slice(0,300),out=[];
+  const idx=(todos||[]).findIndex(y=>y.id===h.id);
+  const cand=BIT.rows.map(r=>({r,src:'bit'})).concat((todos||[]).filter((x,i)=>x.id!==h.id&&(idx<0||i<idx)).map(r=>({r,src:'pla'})));
+  for(const{r,src}of cand){
+    if(diasEntre(r.FECHA,h.FECHA)>20)continue;
+    if(key(limpiarTexto(r.EXTRACTO)).slice(0,300)===propio)continue;
+    const idr=src==='pla'?'p:'+r.id:'b:'+bitClave(r);if((h.otro||[]).includes(idr))continue;
+    const m=compararHechos(fh,src==='pla'?huella(r):bitHuella(r));if(m)out.push({r,src,idr,mot:m.mot})}
+  _repCache.set(ck,out);if(_repCache.size>3000)_repCache.clear();return out}
+function bitEstado(){const n=BIT.rows.length,f=BIT.rows.map(r=>r.FECHA).filter(Boolean).sort();
+  $('bitBadge').textContent=n?n+' hechos':'sin cargar';$('btnBit').classList.toggle('warn',!n);
+  return n?`${n} hechos del ${fechaTxt(f[0])} al ${fechaTxt(f[f.length-1])}`+(BIT.act?` · actualizada ${new Date(BIT.act).toLocaleString('es-AR')}`:''):'No hay bitácora cargada en esta computadora.'}
+function bitDialogo(){
+  $('dlgBody').innerHTML=`<h3>Bitácora de hechos ya cargados</h3><p><b>${esc(bitEstado())}</b></p>
+  <p>La página compara cada hecho nuevo con la bitácora: si ya se cargó (mismo PU, misma persona, misma patente o relato muy parecido), avisa que es una <b>ampliación</b> y que no va en la planilla.</p>
+  <ul><li><b>Control:</b> al recibir los Excel de los operadores, sumarlos con "Agregar Excel a la bitácora" y después "Descargar bitácora" para compartir el archivo actualizado.</li>
+  <li><b>Operadores:</b> al empezar el turno, "Agregar Excel a la bitácora" con el último archivo de bitácora que compartió el control.</li>
+  <li>Lo que cada operador finaliza en esta computadora se suma solo. Se guardan los últimos ${BIT_DIAS} días.</li></ul>
+  <div class="actions"><button class="ghost" id="bitVaciar">Vaciar</button><button class="ghost" id="bitBajar">Descargar bitácora</button><button id="bitAbrir">Agregar Excel a la bitácora</button><button class="ghost" id="bitCerrar">Cerrar</button></div>`;
+  if(!$('dlg').open)($('dlg').open||$('dlg').showModal());
+  $('bitCerrar').onclick=()=>$('dlg').close();
+  $('bitAbrir').onclick=()=>$('bitIn').click();
+  $('bitBajar').onclick=()=>{if(!BIT.rows.length){toast('La bitácora está vacía.');return}if(!window.XLSX){alert('Hace falta conexión a internet para generar el Excel.');return}
+    const cols=['FECHA','PARTIDO','LOCALIDAD','JURISDICCION','DELITO','MODALIDAD','PU','EXTRACTO','OPERADOR','ORIGEN'];
+    const ws=XLSX.utils.json_to_sheet(BIT.rows.slice().sort((a,b)=>String(a.FECHA).localeCompare(String(b.FECHA))).map(r=>({...r,FECHA:fechaTxt(r.FECHA),_f:undefined})),{header:cols});ws['!cols']=[12,18,20,26,24,24,10,90,18,26].map(w=>({wch:w}));
+    const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Bitacora');XLSX.writeFile(wb,'Bitacora_Relevantes_'+new Date().toLocaleDateString('es-AR').replace(/\//g,'-')+'.xlsx')};
+  $('bitVaciar').onclick=()=>{if(!confirm('¿Vaciar la bitácora de esta computadora?'))return;BIT.rows=[];BIT.act='';bitGuardar();bitDialogo();render();revisar()}}
+async function bitImportar(files){
+  if(!window.XLSX){alert('Hace falta conexión a internet para leer Excel.');return}
+  let tot=0;
+  for(const f of files){try{const wb=XLSX.read(await f.arrayBuffer(),{type:'array',cellDates:true});const rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1,defval:'',raw:true});
+    const hi=rows.findIndex(r=>r.some(x=>norm(x)==='extracto'));if(hi<0)continue;const hd=rows[hi].map(x=>norm(x).toUpperCase().replace('CARATULA','DELITO'));
+    const lista=rows.slice(hi+1).filter(r=>r.some(x=>String(x).trim())).map(r=>{const o={};hd.forEach((h,j)=>o[h]=r[j]);return{FECHA:fechaIso(o.FECHA),PARTIDO:canonPartido(String(o.PARTIDO||''))||String(o.PARTIDO||'').trim(),LOCALIDAD:String(o.LOCALIDAD||'').trim(),JURISDICCION:String(o.JURISDICCION||'').trim(),DELITO:String(o.DELITO||'').trim(),MODALIDAD:String(o.MODALIDAD||'').trim(),PU:String(o.PU??'').replace(/\.0$/,'').trim(),EXTRACTO:o.EXTRACTO,OPERADOR:String(o.OPERADOR||'').trim()}});
+    tot+=bitAgregar(lista,f.name)}catch(e){alert('No se pudo leer '+f.name+': '+e.message)}}
+  toast(tot+' hecho(s) nuevos en la bitácora.');bitDialogo();render();revisar()}
+
+const nivel=cs=>cs.some(c=>c.l==='err')?'err':cs.some(c=>c.l==='wrn'||c.l==='amp')?'wrn':'ok';
 
 /* ---------- formulario ---------- */
 function opts(el,list,first){el.innerHTML=(first!==undefined?`<option value="">${esc(first)}</option>`:'')+list.map(x=>`<option value="${esc(x)}">${esc(x)}</option>`).join('')}
 function dl(el,list){el.innerHTML=list.map(x=>`<option value="${esc(x)}"></option>`).join('')}
-function leerForm(){const h={id:editId||('h'+Date.now()+Math.random().toString(16).slice(2,6))};for(const c of CAMPOS)h[c]=$(c).value.trim();return h}
-function escribirForm(h){for(const c of CAMPOS)if(c!=='MODALIDAD')$(c).value=h[c]||'';onPartido();onDelito();$('MODALIDAD').value=h.MODALIDAD||'';if(h.MODALIDAD&&$('MODALIDAD').value!==h.MODALIDAD){$('MODALIDAD').insertAdjacentHTML('beforeend',`<option value="${esc(h.MODALIDAD)}">${esc(h.MODALIDAD)} (no corresponde)</option>`);$('MODALIDAD').value=h.MODALIDAD}contar();revisar()}
+function leerForm(){const h={id:editId||(leerForm.nid||(leerForm.nid='h'+Date.now()+Math.random().toString(16).slice(2,6)))};for(const c of CAMPOS)h[c]=$(c).value.trim();if(formOtro.length)h.otro=formOtro.slice();return h}
+function escribirForm(h){formOtro=(h.otro||[]).slice();for(const c of CAMPOS)if(c!=='MODALIDAD')$(c).value=h[c]||'';onPartido();onDelito();$('MODALIDAD').value=h.MODALIDAD||'';if(h.MODALIDAD&&$('MODALIDAD').value!==h.MODALIDAD){$('MODALIDAD').insertAdjacentHTML('beforeend',`<option value="${esc(h.MODALIDAD)}">${esc(h.MODALIDAD)} (no corresponde)</option>`);$('MODALIDAD').value=h.MODALIDAD}contar();revisar()}
 function onPartido(){const P=canonPartido($('PARTIDO').value);if(P&&P!==$('PARTIDO').value)$('PARTIDO').value=P;
   dl($('dlLocalidades'),P?DATA.LPP[P]:[]);dl($('dlJur'),P?DATA.JPP[P]:[]);
   $('LOCALIDAD').placeholder=P?'Escribir o elegir…':'Primero el partido';$('JURISDICCION').placeholder=P?'Escribir o elegir…':'Primero el partido';
@@ -309,28 +406,35 @@ function revisar(){
   for(const c of CAMPOS){const w=$('w-'+c);w.classList.remove('f-err','f-wrn');const l=cs.filter(x=>x.f===c);if(l.some(x=>x.l==='err'&&String(h[c]||'').trim()))w.classList.add('f-err');else if(l.some(x=>x.l==='wrn'))w.classList.add('f-wrn')}
   const ul=$('checks');
   if(vacio){ul.innerHTML='<li class="inf">Los controles aparecen mientras se completa el formulario.</li>';return cs}
-  const tit={err:'Error',wrn:'Revisar',inf:'Aviso'},ord={esp:-1,err:0,wrn:1,inf:2};
+  const tit={err:'Error',wrn:'Revisar',inf:'Aviso'},ord={amp:-2,esp:-1,err:0,wrn:1,inf:2};
   const lista=cs.slice().sort((a,b)=>ord[a.l]-ord[b.l]);
-  ul.innerHTML=lista.length?lista.map((c,i)=>c.l==='esp'?`<li class="esp"><b>⚑ SE CARGA APARTE EN HERMES: ${esc(espTitulo(c))}</b>${esc(c.m)}</li>`:`<li class="${c.l}"><b>${tit[c.l]}${c.f==='ESP'?' · trato especial':''}</b>${esc(c.m)}${c.a?`<br><button class="ghost small" data-fix="${i}">${esc(c.a.t)}</button>`:''}</li>`).join(''):'<li class="ok"><b>Sin observaciones</b>El hecho está listo para guardar.</li>';
+  ul.innerHTML=lista.length?lista.map((c,i)=>c.l==='amp'?`<li class="amp"><b>⚠ ¿HECHO YA CARGADO? → AMPLIACIÓN</b>${esc(c.m)}<span class="row2"><button class="small danger" data-amp="no">Es el mismo: no cargar</button><button class="small ghost" data-amp="otro">Es otro hecho</button></span></li>`:c.l==='esp'?`<li class="esp"><b>⚑ SE CARGA APARTE EN HERMES: ${esc(espTitulo(c))}</b>${esc(c.m)}</li>`:`<li class="${c.l}"><b>${tit[c.l]}${c.f==='ESP'?' · trato especial':''}</b>${esc(c.m)}${c.a?`<br><button class="ghost small" data-fix="${i}">${esc(c.a.t)}</button>`:''}</li>`).join(''):'<li class="ok"><b>Sin observaciones</b>El hecho está listo para guardar.</li>';
   const aplicar=b=>{const a=lista[+b.dataset.fix].a;for(const[k,v]of Object.entries(a.set)){if(k==='DELITO'){$('DELITO').value=v;onDelito()}else{$(k).value=v;if(k==='PARTIDO')onPartido()}}revisar();toast('Corregido: '+a.t.replace(/^Usar |^Cambiar a |^Cargar /,''))};
-  ul.onmousedown=e=>{const b=e.target.closest('[data-fix]');if(!b)return;e.preventDefault();aplicar(b)};
+  const ampA=b=>{const c=lista.find(x=>x.l==='amp');if(!c)return;if(b.dataset.amp==='otro'){formOtro=formOtro.concat(c.reps.map(r=>r.idr));revisar();toast('Marcado como otro hecho.')}else{if(editId){const id=editId;limpiar();state.hechos=state.hechos.filter(x=>x.id!==id);persist();render();toast('No se carga: se quitó de la planilla. Adjuntar la ampliación en HERMES.')}else{limpiar(true);toast('No se carga. Adjuntar la ampliación en HERMES al hecho original.')}}};
+  ul.onmousedown=e=>{const a=e.target.closest('[data-amp]');if(a){e.preventDefault();ampA(a);return}const b=e.target.closest('[data-fix]');if(!b)return;e.preventDefault();aplicar(b)};
+  ul.querySelectorAll('[data-amp]').forEach(b=>b.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();ampA(b)}});
   ul.querySelectorAll('[data-fix]').forEach(b=>b.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();aplicar(b)}});
   return cs}
-function limpiar(mantener){const keep={FECHA:$('FECHA').value,PARTIDO:$('PARTIDO').value,JURISDICCION:$('JURISDICCION').value};for(const c of CAMPOS)$(c).value='';editId=null;
+function limpiar(mantener){formOtro=[];leerForm.nid=null;const keep={FECHA:$('FECHA').value,PARTIDO:$('PARTIDO').value,JURISDICCION:$('JURISDICCION').value};for(const c of CAMPOS)$(c).value='';editId=null;
   if(mantener){$('FECHA').value=keep.FECHA}
   onPartido();onDelito();$('editBanner').classList.remove('on');$('formTitle').textContent='Nuevo hecho';$('btnGuardar').textContent='Guardar hecho';contar();revisar();render()}
-function guardar(){
+function guardar(forzar){
   $('EXTRACTO').value=limpiarTexto($('EXTRACTO').value);
   const P=canonPartido($('PARTIDO').value);if(P)$('PARTIDO').value=P;onPartido();
   const h=leerForm(),cs=controles(h,state.hechos);
   if(CAMPOS.every(c=>!h[c])){toast('El formulario está vacío.');return}
+  const amp=cs.find(c=>c.l==='amp');
+  if(amp&&!forzar){$('dlgBody').innerHTML=`<h3>⚠ ¿Es un hecho ya cargado?</h3><div class="esp-box" style="border-color:#e8892b;background:#fff4e5">${esc(amp.m)}</div><p>Si es el mismo hecho, <b>no se carga en la planilla</b>: se adjunta la ampliación en HERMES.</p><div class="actions"><button class="ghost" id="dlgVolver">Volver</button><button class="danger" id="dlgNoCargar">Es el mismo: no cargar</button><button id="dlgOtro">Es otro hecho: guardar</button></div>`;($('dlg').open||$('dlg').showModal());
+    $('dlgVolver').onclick=()=>$('dlg').close();
+    $('dlgNoCargar').onclick=()=>{$('dlg').close();if(editId){const id=editId;limpiar();state.hechos=state.hechos.filter(x=>x.id!==id);persist();render()}else limpiar(true);toast('No se carga. Adjuntar la ampliación en HERMES al hecho original.')};
+    $('dlgOtro').onclick=()=>{$('dlg').close();formOtro=formOtro.concat(amp.reps.map(r=>r.idr));guardar(true)};return}
   const i=state.hechos.findIndex(x=>x.id===h.id);
   if(i>=0)state.hechos[i]=h;else state.hechos.push(h);
   persist();
   const errs=cs.filter(c=>c.l==='err').length;
   toast(i>=0?'Hecho actualizado.':`Hecho N° ${state.hechos.length} guardado${errs?' con '+errs+' error(es) para corregir':''}.`);
   limpiar(true);$('PARTIDO').focus();
-  const es=ESPS(cs);if(es.length){$('dlgBody').innerHTML=`<h3>⚑ Este hecho también se carga aparte en HERMES</h3>${es.map(c=>`<div class="esp-box"><b>${esc(espTitulo(c))}</b><br>${esc(c.m)}</div>`).join('')}<p>Queda marcado en la lista y en la hoja "Carga aparte HERMES" del Excel.</p><div class="actions"><button id="dlgOkEsp">Entendido</button></div>`;$('dlg').showModal();$('dlgOkEsp').onclick=()=>$('dlg').close();$('dlgOkEsp').focus()}}
+  const es=ESPS(cs);if(es.length){$('dlgBody').innerHTML=`<h3>⚑ Este hecho también se carga aparte en HERMES</h3>${es.map(c=>`<div class="esp-box"><b>${esc(espTitulo(c))}</b><br>${esc(c.m)}</div>`).join('')}<p>Queda marcado en la lista y en la hoja "Carga aparte HERMES" del Excel.</p><div class="actions"><button id="dlgOkEsp">Entendido</button></div>`;($('dlg').open||$('dlg').showModal());$('dlgOkEsp').onclick=()=>$('dlg').close();$('dlgOkEsp').focus()}}
 function editar(id){const h=state.hechos.find(x=>x.id===id);if(!h)return;editId=id;escribirForm(h);const n=state.hechos.indexOf(h)+1;$('editN').textContent=n;$('editBanner').classList.add('on');$('formTitle').textContent='Editar hecho N° '+n;$('btnGuardar').textContent='Guardar cambios';render();window.scrollTo({top:0,behavior:'smooth'})}
 function borrar(id){const h=state.hechos.find(x=>x.id===id);if(!h)return;if(!confirm('¿Borrar el hecho N° '+(state.hechos.indexOf(h)+1)+' ('+(h.DELITO||'sin carátula')+', '+(h.PARTIDO||'sin partido')+')?'))return;state.hechos=state.hechos.filter(x=>x.id!==id);if(editId===id)limpiar();persist();render()}
 
@@ -341,10 +445,10 @@ function render(){
   $('kTot').textContent=state.hechos.length;$('kErr').textContent=e;$('kWrn').textContent=w;
   const vis=rows.filter(r=>!q||norm(CAMPOS.map(c=>r.h[c]).join(' ')).includes(q));
   $('tbody').innerHTML=vis.length?vis.map(({h,i,cs,lv})=>{
-    const ne=cs.filter(c=>c.l==='err').length,nw=cs.filter(c=>c.l==='wrn').length,esp=cs.filter(c=>c.f==='ESP');
+    const ne=cs.filter(c=>c.l==='err').length,nw=cs.filter(c=>c.l==='wrn').length+cs.filter(c=>c.l==='amp').length,esp=cs.filter(c=>c.f==='ESP');
     const tip=esc(cs.filter(c=>c.l!=='inf').map(c=>'• '+c.m).join('\n'));
     return `<tr class="${h.id===editId?'sel':''}" data-id="${h.id}"><td class="n">${i+1}</td><td>${esc(fechaTxt(h.FECHA))}</td><td>${esc(h.PARTIDO)}<small>${esc(h.LOCALIDAD)}</small></td><td class="hide-m">${esc(h.JURISDICCION)}</td><td>${esc(h.DELITO)}<small>${esc(h.MODALIDAD)}</small></td><td class="hide-m">${esc(h.PU)}</td>
-    <td title="${tip}">${ne?`<span class="pill err">${ne} error${ne>1?'es':''}</span>`:''}${nw?`<span class="pill wrn">${nw} a revisar</span>`:''}${!ne&&!nw?'<span class="pill ok">OK</span>':''}${ESPS(cs).map(s=>`<span class="pill esp" title="${esc(s.m)}">${s.tipo==='Homicidio'?'Homicidios PBA':'Enfrentamientos PBA'}</span>`).join('')}</td>
+    <td title="${tip}">${ne?`<span class="pill err">${ne} error${ne>1?'es':''}</span>`:''}${nw?`<span class="pill wrn">${nw} a revisar</span>`:''}${!ne&&!nw?'<span class="pill ok">OK</span>':''}${cs.some(c=>c.l==='amp')?'<span class="pill amp">¿Ya cargado?</span>':''}${ESPS(cs).map(s=>`<span class="pill esp" title="${esc(s.m)}">${s.tipo==='Homicidio'?'Homicidios PBA':'Enfrentamientos PBA'}</span>`).join('')}</td>
     <td style="white-space:nowrap"><button class="ghost small" data-ed="${h.id}">Editar</button> <button class="danger small" data-del="${h.id}" aria-label="Borrar">✕</button></td></tr>`}).join(''):`<tr><td colspan="8" class="empty">${state.hechos.length?'Ningún hecho coincide con la búsqueda.':'Todavía no hay hechos cargados.'}</td></tr>`;
   $('tbody').querySelectorAll('[data-ed]').forEach(b=>b.onclick=ev=>{ev.stopPropagation();editar(b.dataset.ed)});
   $('tbody').querySelectorAll('[data-del]').forEach(b=>b.onclick=ev=>{ev.stopPropagation();borrar(b.dataset.del)});
@@ -362,7 +466,7 @@ function exportar(){
   ws['!cols']=[12,20,22,30,28,28,10,90,26].map(w=>({wch:w}));
   const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Hoja1');
   const ctrl=[['CARGA HERMES · CONTROL'],['Operador',op],['Generado',new Date().toLocaleString('es-AR')],['Hechos',data.length],['Se cargan aparte (Homicidios / Enfrentamientos PBA)',state.hechos.filter(h=>ESPS(controles(h,state.hechos)).length).length],['Versión de la página',VERSION],[],['N°','PU','CARÁTULA','OBSERVACIONES DE LA CARGA']];
-  state.hechos.forEach((h,i)=>{const cs=controles(h,state.hechos);const t=cs.map(c=>(c.l==='err'?'[ERROR] ':c.l==='wrn'?'[REVISAR] ':c.l==='esp'?'[CARGA APARTE: '+(c.tipo==='Homicidio'?'HOMICIDIOS PBA':'ENFRENTAMIENTOS PBA')+'] ':'[AVISO] ')+c.m).join(' | ');ctrl.push([i+1,h.PU,h.DELITO,t||'Sin observaciones'])});
+  state.hechos.forEach((h,i)=>{const cs=controles(h,state.hechos);const t=cs.map(c=>(c.l==='err'?'[ERROR] ':c.l==='wrn'?'[REVISAR] ':c.l==='amp'?'[POSIBLE AMPLIACIÓN] ':c.l==='esp'?'[CARGA APARTE: '+(c.tipo==='Homicidio'?'HOMICIDIOS PBA':'ENFRENTAMIENTOS PBA')+'] ':'[AVISO] ')+c.m).join(' | ');ctrl.push([i+1,h.PU,h.DELITO,t||'Sin observaciones'])});
   const ap=[['N°','PU','FECHA','PARTIDO','JURISDICCION','CARÁTULA','MODALIDAD','SE CARGA EN','NIVEL','QUÉ HACER']];
   state.hechos.forEach((h,i)=>ESPS(controles(h,state.hechos)).forEach(c=>ap.push([i+1,h.PU,fechaTxt(h.FECHA),h.PARTIDO,h.JURISDICCION,h.DELITO,h.MODALIDAD,c.tipo==='Homicidio'?'Homicidios PBA':'Enfrentamientos PBA',c.nivel,c.m])));
   const w2=XLSX.utils.aoa_to_sheet(ctrl);w2['!cols']=[{wch:10},{wch:12},{wch:28},{wch:120}];XLSX.utils.book_append_sheet(wb,w2,'Control');
@@ -374,20 +478,20 @@ function finalizar(){
   if(!state.hechos.length){toast('No hay hechos cargados.');return}
   if(editId){if(!confirm('Hay un hecho en edición sin guardar. ¿Finalizar igual (se pierden esos cambios)?'))return;limpiar()}
   const rows=state.hechos.map((h,i)=>({i,cs:controles(h,state.hechos)}));
-  const errs=rows.filter(r=>r.cs.some(c=>c.l==='err')),wrns=rows.filter(r=>!r.cs.some(c=>c.l==='err')&&r.cs.some(c=>c.l==='wrn')),esp=rows.filter(r=>ESPS(r.cs).length);
+  const errs=rows.filter(r=>r.cs.some(c=>c.l==='err')),wrns=rows.filter(r=>!r.cs.some(c=>c.l==='err')&&r.cs.some(c=>c.l==='wrn'||c.l==='amp')),esp=rows.filter(r=>ESPS(r.cs).length);
   const op=$('operador').value.trim();
   let html=`<h3>Finalizar planilla</h3><p>${state.hechos.length} hecho(s) cargado(s)${op?' por <b>'+esc(op)+'</b>':''}.</p>`;
   if(!op)html+=`<p class="pill wrn" style="display:block;padding:8px 10px;border-radius:8px">Falta el nombre del operador (arriba a la derecha). Se recomienda completarlo.</p>`;
   if(errs.length){html+=`<p><b style="color:var(--err)">Hay ${errs.length} hecho(s) con errores.</b> Hay que corregirlos antes de generar el Excel:</p><ul>${errs.map(r=>`<li><a href="#" data-go="${state.hechos[r.i].id}">Hecho N° ${r.i+1}</a>: ${esc(r.cs.filter(c=>c.l==='err').map(c=>c.m).join(' '))}</li>`).join('')}</ul><div class="actions"><button class="ghost" id="dlgCerrar">Volver a la carga</button></div>`}
   else{
-    if(wrns.length)html+=`<p><b style="color:var(--wrn)">${wrns.length} hecho(s) tienen observaciones para revisar.</b> Se puede generar igual; las observaciones van en la hoja Control del Excel.</p><ul>${wrns.map(r=>`<li><a href="#" data-go="${state.hechos[r.i].id}">Hecho N° ${r.i+1}</a>: ${esc(r.cs.filter(c=>c.l==='wrn').map(c=>c.m).join(' '))}</li>`).join('')}</ul>`;
+    if(wrns.length)html+=`<p><b style="color:var(--wrn)">${wrns.length} hecho(s) tienen observaciones para revisar.</b> Se puede generar igual; las observaciones van en la hoja Control del Excel.</p><ul>${wrns.map(r=>`<li><a href="#" data-go="${state.hechos[r.i].id}">Hecho N° ${r.i+1}</a>: ${esc(r.cs.filter(c=>c.l==='wrn'||c.l==='amp').map(c=>c.m).join(' '))}</li>`).join('')}</ul>`;
     if(esp.length)html+=`<div class="esp-box"><b>⚑ Se cargan aparte en HERMES (${esp.length}):</b><ul>${esp.map(r=>`<li>Hecho N° ${r.i+1}${state.hechos[r.i].PU?' (PU '+esc(state.hechos[r.i].PU)+')':''}: ${ESPS(r.cs).map(c=>esc(espTitulo(c))).join(' y ')}</li>`).join('')}</ul>Van detallados en la hoja "Carga aparte HERMES" del Excel.</div>`;
     if(!wrns.length)html+='<p style="color:var(--ok);font-weight:600">Todo correcto.</p>';
     html+=`<div class="actions"><button class="ghost" id="dlgCerrar">Seguir cargando</button><button id="dlgOk">Generar Excel</button></div>`}
-  $('dlgBody').innerHTML=html;$('dlg').showModal();
+  $('dlgBody').innerHTML=html;($('dlg').open||$('dlg').showModal());
   $('dlgCerrar').onclick=()=>$('dlg').close();
   $('dlgBody').querySelectorAll('[data-go]').forEach(a=>a.onclick=ev=>{ev.preventDefault();$('dlg').close();editar(a.dataset.go)});
-  if($('dlgOk'))$('dlgOk').onclick=()=>{const n=exportar();if(!n)return;$('dlgBody').innerHTML=`<h3>Excel generado</h3><p>Se descargó <b>${esc(n)}</b>. Enviarlo al control.</p><p>¿Querés vaciar la planilla para empezar otra? Lo cargado se borra de este navegador.</p><div class="actions"><button class="ghost" id="dlgNo">Mantener</button><button class="danger" id="dlgVaciar">Vaciar planilla</button></div>`;$('dlgNo').onclick=()=>$('dlg').close();$('dlgVaciar').onclick=()=>{state.hechos=[];persist();limpiar();$('dlg').close();toast('Planilla vacía.')}}
+  if($('dlgOk'))$('dlgOk').onclick=()=>{const n=exportar();if(!n)return;bitAgregar(state.hechos.map(h=>({...h,OPERADOR:$('operador').value.trim()})),n);$('dlgBody').innerHTML=`<h3>Excel generado</h3><p>Se descargó <b>${esc(n)}</b>. Enviarlo al control.</p><p>¿Querés vaciar la planilla para empezar otra? Lo cargado se borra de este navegador.</p><div class="actions"><button class="ghost" id="dlgNo">Mantener</button><button class="danger" id="dlgVaciar">Vaciar planilla</button></div>`;$('dlgNo').onclick=()=>$('dlg').close();$('dlgVaciar').onclick=()=>{state.hechos=[];persist();limpiar();$('dlg').close();toast('Planilla vacía.')}}
 }
 async function abrirExcel(f){
   if(!window.XLSX){alert('No se pudo cargar la biblioteca de Excel. Hace falta conexión a internet.');return}
@@ -404,7 +508,7 @@ async function abrirExcel(f){
     persist();render();toast(n+' hecho(s) agregados desde '+f.name+'.')}catch(e){alert('No se pudo leer el archivo: '+e.message)}}
 
 /* ---------- inicio ---------- */
-restore();
+restore();bitLeer();
 dl($('dlPartidos'),PART);opts($('DELITO'),CARS,'Elegir carátula…');
 $('operador').value=state.operador||'';
 $('operador').oninput=()=>{state.operador=$('operador').value;persist()};
@@ -417,18 +521,20 @@ for(const c of ['FECHA','LOCALIDAD','JURISDICCION','MODALIDAD','PU','COORDENADAS
 $('MODALIDAD').addEventListener('change',revisar);
 $('EXTRACTO').addEventListener('input',()=>{contar();clearTimeout(revisar.t);revisar.t=setTimeout(revisar,250)});
 $('EXTRACTO').addEventListener('blur',()=>{const v=limpiarTexto($('EXTRACTO').value);if(v!==$('EXTRACTO').value){$('EXTRACTO').value=v;contar();revisar();toast('Se unificaron saltos de línea y espacios del extracto.')}});
-$('btnGuardar').onclick=guardar;$('btnLimpiar').onclick=()=>limpiar();
+$('btnGuardar').onclick=()=>guardar();$('btnLimpiar').onclick=()=>limpiar();
 $('cancelEdit').onclick=e=>{e.preventDefault();limpiar()};
 $('btnFin').onclick=finalizar;
 $('btnNueva').onclick=()=>{if(state.hechos.length&&!confirm('¿Vaciar la planilla? Se borran los '+state.hechos.length+' hechos cargados en este navegador. Si no generaste el Excel, se pierden.'))return;state.hechos=[];persist();limpiar();toast('Planilla nueva.')};
 $('btnAbrir').onclick=()=>$('fileIn').click();
+$('btnBit').onclick=bitDialogo;
+$('bitIn').onchange=e=>{const f=[...e.target.files];if(f.length)bitImportar(f);e.target.value=''};
 $('fileIn').onchange=e=>{const f=e.target.files[0];if(f)abrirExcel(f);e.target.value=''};
 $('btnMapa').onclick=()=>{const c=parseCoord($('COORDENADAS').value);if(!c){toast('Primero escribir coordenadas válidas.');return}window.open('https://www.google.com/maps?q='+c[0]+','+c[1],'_blank','noopener')};
 $('buscar').oninput=render;
 document.addEventListener('keydown',e=>{if(e.ctrlKey&&e.key==='Enter'){e.preventDefault();guardar()}});
 window.addEventListener('beforeunload',e=>{const h=leerForm();if(CAMPOS.some(c=>h[c])){e.preventDefault();e.returnValue=''}});
 if(!$('FECHA').value)$('FECHA').value=new Date(Date.now()-864e5-new Date().getTimezoneOffset()*6e4).toISOString().slice(0,10);
-onPartido();onDelito();contar();render();revisar();
+onPartido();onDelito();contar();bitEstado();render();revisar();
 </script>
 </body>
 </html>
