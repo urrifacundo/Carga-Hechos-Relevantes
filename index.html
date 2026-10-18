@@ -125,7 +125,7 @@ dialog::backdrop{background:rgba(16,30,40,.45)}
       <label class="c3" id="w-PU">PU<input id="PU" inputmode="numeric" placeholder="Ej.: 295392" autocomplete="off"></label>
       <label class="c3" id="w-DELITO">Carátula (delito) <span class="req">*</span><select id="DELITO"></select></label>
       <label class="c3" id="w-MODALIDAD">Modalidad <span class="req">*</span><select id="MODALIDAD"><option value="">Primero la carátula</option></select></label>
-      <label class="c6" id="w-COORDENADAS">Coordenadas (latitud, longitud) <span class="req">*</span>
+      <label class="c6" id="w-COORDENADAS">Coordenadas (latitud, longitud) <span class="hint">(si no se tienen, se puede dejar vacío)</span>
         <span class="row"><input id="COORDENADAS" placeholder="-34.921450, -57.954530" autocomplete="off"><button type="button" class="ghost small" id="btnMapa">Ver en mapa</button></span>
       </label>
       <label class="c6" id="w-EXTRACTO">Extracto <span class="req">*</span><textarea id="EXTRACTO" placeholder="Pegar el texto completo del hecho (encabezado y relato)."></textarea><span class="count" id="cnt">0 caracteres</span></label>
@@ -192,7 +192,8 @@ function limpiarTexto(s){return String(s||'').replace(/[\r\n\t]+/g,' ').replace(
 /* ---------- controles ---------- */
 function controles(h,todos){
   const out=[],E=(f,m,a)=>out.push({l:'err',f,m,a}),W=(f,m,a)=>out.push({l:'wrn',f,m,a}),I=(f,m,a)=>out.push({l:'inf',f,m,a});
-  for(const c of ['FECHA','PARTIDO','LOCALIDAD','JURISDICCION','DELITO','MODALIDAD','COORDENADAS','EXTRACTO'])if(!String(h[c]||'').trim())E(c,'Falta completar '+c.toLowerCase().replace('jurisdiccion','jurisdicción').replace('delito','carátula')+'.');
+  if(!String(h.COORDENADAS||'').trim())W('COORDENADAS','Sin coordenadas: se puede generar el Excel igual. Completarlas cuando se tengan.');
+  for(const c of ['FECHA','PARTIDO','LOCALIDAD','JURISDICCION','DELITO','MODALIDAD','EXTRACTO'])if(!String(h[c]||'').trim())E(c,'Falta completar '+c.toLowerCase().replace('jurisdiccion','jurisdicción').replace('delito','carátula')+'.');
   if(h.FECHA){const d=new Date(h.FECHA+'T12:00:00'),hoy=new Date();if(isNaN(d))E('FECHA','Fecha inválida.');else if(d>new Date(hoy.getTime()+864e5))E('FECHA','La fecha es posterior a hoy.');else if(hoy-d>60*864e5)W('FECHA','El hecho tiene más de 60 días: verificar la fecha.')}
   if(h.FECHA&&h.EXTRACTO){const m=String(h.EXTRACTO).match(/^\s*(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{4})/);if(m){const iso=`${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;if(iso!==h.FECHA)E('FECHA','La fecha cargada ('+fechaTxt(h.FECHA)+') no coincide con la del encabezado del extracto ('+fechaTxt(iso)+').',{t:'Usar '+fechaTxt(iso),set:{FECHA:iso}})}}
   const P=h.PARTIDO?canonPartido(h.PARTIDO):null;
