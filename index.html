@@ -548,6 +548,55 @@ document.addEventListener('keydown',e=>{if(e.ctrlKey&&e.key==='Enter'){e.prevent
 window.addEventListener('beforeunload',e=>{const h=leerForm();if(CAMPOS.some(c=>h[c])){e.preventDefault();e.returnValue=''}});
 if(!$('FECHA').value)$('FECHA').value=new Date(Date.now()-864e5-new Date().getTimezoneOffset()*6e4).toISOString().slice(0,10);
 onPartido();onDelito();contar();bitEstado();render();revisar();
+/* ---------- listas con búsqueda por palabras (carátula / modalidad) ---------- */
+(function(){const st=document.createElement('style');st.textContent=
+'.bq{position:relative;margin-top:5px}.bq>select{position:absolute;left:0;bottom:0;width:100%;height:2px;opacity:0;pointer-events:none;margin:0;padding:0;border:0}'+
+'.bq>input{display:block;padding-right:30px}.bq::after{content:"▾";position:absolute;right:11px;top:50%;transform:translateY(-50%);color:#5d6c79;pointer-events:none;font-size:13px}'+
+'.bq ul{display:none;position:absolute;z-index:50;left:0;right:0;top:calc(100% + 3px);max-height:290px;overflow:auto;margin:0;padding:4px;list-style:none;background:#fff;border:1px solid #c5d0d6;border-radius:8px;box-shadow:0 8px 24px rgba(22,34,46,.16)}'+
+'.bq.open ul{display:block}.bq li{padding:7px 9px;border-radius:6px;cursor:pointer;font-size:14px;line-height:1.3}.bq li.act{background:var(--pri2,#e6f2f4)}.bq li.sel{font-weight:600}.bq li mark{background:#fff1cc;color:inherit;border-radius:2px}'+
+'.bq li.vac{color:#5d6c79;cursor:default;font-style:italic}';document.head.appendChild(st)})();
+function buscable(sel){
+  const nrm=s=>String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase();
+  const w=document.createElement('div');w.className='bq';sel.parentNode.insertBefore(w,sel);w.appendChild(sel);
+  sel.style.marginTop='0';sel.tabIndex=-1;
+  const inp=document.createElement('input');inp.type='text';inp.autocomplete='off';inp.spellcheck=false;inp.id=sel.id+'_q';
+  const ul=document.createElement('ul');w.insertBefore(inp,sel);w.appendChild(ul);
+  let items=[],act=-1;
+  const opciones=()=>[...sel.options].filter(o=>o.value!=='');
+  const placeholder=()=>{const o=[...sel.options].find(o=>o.value==='');return o?o.text:''};
+  const mostrar=()=>{const o=sel.selectedOptions[0];inp.value=o&&o.value!==''?o.text:'';inp.placeholder=placeholder()};
+  const resaltar=(t,ws)=>{let h=t.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));if(!ws.length)return h;
+    const n=nrm(t),marks=new Array(t.length).fill(false);for(const x of ws){let i=n.indexOf(x);while(i>=0){for(let k=i;k<i+x.length;k++)marks[k]=true;i=n.indexOf(x,i+1)}}
+    let out='',on=false;[...t].forEach((ch,i)=>{const e=ch.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));if(marks[i]&&!on){out+='<mark>';on=true}if(!marks[i]&&on){out+='</mark>';on=false}out+=e});return out+(on?'</mark>':'')};
+  function pintar(q){const ws=nrm(q).split(/[\s.,;/()-]+/).filter(Boolean);
+    items=opciones().filter(o=>{const t=nrm(o.text),t2=t.replace(/\./g,'');return ws.every(x=>t.includes(x)||t2.includes(x.replace(/\./g,'')))});
+    // primero las que empiezan con lo escrito
+    if(ws.length){const p=nrm(q).trim();items.sort((a,b)=>(nrm(b.text).startsWith(p)-nrm(a.text).startsWith(p)))}
+    act=items.length?0:-1;
+    ul.innerHTML=items.length?items.map((o,i)=>`<li data-i="${i}" class="${i===act?'act ':''}${o.value===sel.value?'sel':''}">${resaltar(o.text,ws)}</li>`).join(''):'<li class="vac">Sin coincidencias</li>'}
+  function abrir(q){pintar(q);w.classList.add('open')}
+  function cerrar(){w.classList.remove('open');act=-1}
+  function elegir(o){cerrar();if(!o)return;if(sel.value!==o.value){sel.value=o.value;sel.dispatchEvent(new Event('change',{bubbles:true}))}else mostrar()}
+  function mover(d){if(!items.length)return;act=(act+d+items.length)%items.length;[...ul.children].forEach((li,i)=>li.classList.toggle('act',i===act));const li=ul.children[act];li&&li.scrollIntoView({block:'nearest'})}
+  inp.addEventListener('focus',()=>{inp.select();abrir('')});
+  inp.addEventListener('click',()=>{if(!w.classList.contains('open'))abrir('')});
+  inp.addEventListener('input',()=>abrir(inp.value));
+  inp.addEventListener('keydown',e=>{
+    if(e.key==='ArrowDown'){e.preventDefault();if(!w.classList.contains('open'))abrir('');else mover(1)}
+    else if(e.key==='ArrowUp'){e.preventDefault();mover(-1)}
+    else if(e.key==='Enter'){if(w.classList.contains('open')){e.preventDefault();elegir(items[act])}}
+    else if(e.key==='Escape'){cerrar();mostrar()}
+    else if(e.key==='Tab'){if(w.classList.contains('open')&&inp.value.trim()&&items.length)elegir(items[act]);else cerrar()}});
+  inp.addEventListener('blur',()=>{setTimeout(()=>{cerrar();if(!inp.value.trim()&&sel.value!==''){sel.value='';sel.dispatchEvent(new Event('change',{bubbles:true}))}mostrar()},0)});
+  ul.addEventListener('mousedown',e=>{e.preventDefault();const li=e.target.closest('li[data-i]');if(li)elegir(items[+li.dataset.i])});
+  // mantener sincronizado cuando el código cambia la lista o el valor
+  const d=Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value');
+  Object.defineProperty(sel,'value',{configurable:true,get(){return d.get.call(this)},set(v){d.set.call(this,v);mostrar()}});
+  new MutationObserver(mostrar).observe(sel,{childList:true,subtree:true});
+  sel.addEventListener('change',mostrar);
+  const lab=sel.closest('label');if(lab)lab.addEventListener('click',e=>{if(e.target===lab)inp.focus()});
+  mostrar();return inp}
+buscable($('DELITO'));buscable($('MODALIDAD'));
 </script>
 </body>
 </html>
